@@ -2,8 +2,7 @@
 import os
 import numpy as np
 import struct
-import PIL.Image
-
+from PIL import Image
 import tensorflow as tf
 import glob
 
@@ -34,7 +33,7 @@ def write_records_file(dataset, record_location):
     for breed, images_filenames in dataset.items():
         print(breed)
         for image_filename in images_filenames:
-            if current_index % 1000 == 0:
+            if current_index % 1000000 == 0:
                 if writer:
                     writer.close()
 
@@ -42,12 +41,20 @@ def write_records_file(dataset, record_location):
                     record_location=record_location,
                     current_index=current_index)
 
+                print(current_index)
+
                 writer = tf.python_io.TFRecordWriter(record_filename)
             current_index += 1
-            print(current_index)
 
+            # Instead of using the label as a string, it'd be more efficient to turn it into either an
+            # integer index or a one-hot encoded rank one tensor.
+            # https://en.wikipedia.org/wiki/One-hot
+            image_label = breed.encode("utf-8")
+
+            # read image using tf, WILL cause OOM error:
+            '''
             image_file = tf.read_file(image_filename)
-
+            
             # In ImageNet dogs, there are a few images which TensorFlow doesn't recognize as JPEGs. This
             # try/catch will ignore those images.
             try:
@@ -57,23 +64,40 @@ def write_records_file(dataset, record_location):
                 continue
 
             # Converting to grayscale saves processing and memory but isn't required.
-            # grayscale_image = tf.image.rgb_to_grayscale(image)
-            
+            grayscale_image = tf.image.rgb_to_grayscale(image)
+
             # resized_image = tf.image.resize_images(grayscale_image, (250, 151))
 
             # tf.cast is used here because the resized images are floats but haven't been converted into
             # image floats where an RGB value is between [0,1).
             image_bytes = sess.run(tf.cast(image, tf.uint8)).tobytes()
+            '''
 
-            # Instead of using the label as a string, it'd be more efficient to turn it into either an
-            # integer index or a one-hot encoded rank one tensor.
-            # https://en.wikipedia.org/wiki/One-hot
-            image_label = breed.encode("utf-8")
+            # read image using PIL, save decoded image to tfrecord file
+            '''
+            img = Image.open(image_filename).convert('L')
+            img = img.resize((250,151)) # width, height
+            img_raw = img.tobytes()
+            fname = image_filename.split("\\")[-1].encode("utf-8")
 
             example = tf.train.Example(features=tf.train.Features(feature={
                 'label': tf.train.Feature(bytes_list=tf.train.BytesList(value=[image_label])),
-                'image': tf.train.Feature(bytes_list=tf.train.BytesList(value=[image_bytes]))
+                'file_name': tf.train.Feature(bytes_list=tf.train.BytesList(value=[fname])),
+                'image': tf.train.Feature(bytes_list=tf.train.BytesList(value=[img_raw]))
             }))
+            '''
+            # read image use open(), need names
+            f = open(image_filename, 'rb')
+            img_raw = f.read()
+
+            fname = image_filename.split("\\")[-1].encode("utf-8")
+
+            example = tf.train.Example(features=tf.train.Features(feature={
+                'label': tf.train.Feature(bytes_list=tf.train.BytesList(value=[image_label])),
+                'file_name': tf.train.Feature(bytes_list=tf.train.BytesList(value=[fname])),
+                'image': tf.train.Feature(bytes_list=tf.train.BytesList(value=[img_raw]))
+            }))
+
 
             # writer.write(example.SerializeToString())
             writer.write(example.SerializeToString())
